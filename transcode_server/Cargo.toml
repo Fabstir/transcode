@@ -1,0 +1,40 @@
+[package]
+name = "transcode_log"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]] # Bin to run the HelloWorld gRPC server
+name = "transcode-server"
+path = "src/server.rs"
+
+# [[bin]] # Bin to run the HelloWorld gRPC client
+# name = "helloworld-client"
+# path = "src/client.rs"
+
+# [[bin]] # Bin to run build.rs
+# name = "build-proto"
+# path = "build.rs"
+
+
+[dependencies]
+blake3 = "1.3.1"
+anyhow = "1.0.66"
+reqwest = "0.9"
+# tus_client = {version = "0.1.1", features = ["reqwest"]}
+tus_client = {version = "0.2.0", path = "../tus_client", features = ["reqwest"]}
+base64 = "0.21.0"
+tonic = "0.8"
+prost = "0.11"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+hex = "0.4.3"
+bytes = "1.4.0"
+dotenv = "0.15.0"
+dotenv_codegen = "0.15.0"
+once_cell = "1.8.0"
+sanitize-filename = "0.4.0"
+
+[build-dependencies]
+tonic-build = "0.8"
+prost-build = "0.11.8"
