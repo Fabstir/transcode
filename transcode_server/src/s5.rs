@@ -1,6 +1,5 @@
 use base64::{engine::general_purpose, Engine as _};
 use dotenv::var;
-use reqwest;
 use std::fs::File;
 use std::io::copy;
 use std::io::{BufReader, Read};
@@ -22,7 +21,7 @@ pub fn download_file(url: &str, path: &str) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-pub fn upload_video(path: &str) -> Result<String, anyhow::Error> {
+pub fn upload_video(path: &str) -> Result<Vec<u8>, anyhow::Error> {
     let portal_url = var("PORTAL_URL").unwrap();
     let token = var("TOKEN").unwrap();
 
@@ -31,6 +30,7 @@ pub fn upload_video(path: &str) -> Result<String, anyhow::Error> {
     let path = Path::new(path);
     let metadata = fs::metadata(path).expect("Failed to read metadata");
     let file_size = metadata.len();
+    println!("file_size = {}", &file_size);
 
     let hash = hash_blake3_file(String::from(path.to_str().unwrap())).unwrap();
 
@@ -44,7 +44,9 @@ pub fn upload_video(path: &str) -> Result<String, anyhow::Error> {
     println!("{}", metadata.get("hash").unwrap());
 
     let cid = hash_to_cid(metadata.get("hash").unwrap(), file_size);
-    println!("cid = {}", cid);
+    println!("cid = {:?}", cid);
+    println!("path = {}", &path.display());
+    println!("portal_url = {}", &portal_url);
 
     let upload_url = match client.create_with_metadata(
         &format!("{}{}", portal_url, "/s5/upload/tus"),
@@ -58,7 +60,9 @@ pub fn upload_video(path: &str) -> Result<String, anyhow::Error> {
         }
     };
 
-    match client.upload(&upload_url, path) {
+    println!("upload_url = {}", &upload_url);
+    let chunk_size: usize = 1024 * 1024 * 5;
+    match client.upload_with_chunk_size(&upload_url, path, chunk_size) {
         Ok(_) => (),
         Err(e) => eprintln!("Failed to upload file to server: {}", e),
     }
@@ -90,8 +94,8 @@ fn blake3_digest<R: Read>(mut reader: R) -> Result<blake3::Hash, anyhow::Error> 
     Ok(hasher.finalize())
 }
 
-fn hash_to_cid(hash: &str, file_size: u64) -> String {
-    // Define the CID as a 256-bit hash
+pub fn hash_to_cid(hash: &str, file_size: u64) -> Vec<u8> {
+    // Decode the base64url hash back to bytes
     let cid = general_purpose::URL_SAFE_NO_PAD.decode(hash).unwrap();
 
     // Clone the CID to a mutable vector of bytes
@@ -111,8 +115,5 @@ fn hash_to_cid(hash: &str, file_size: u64) -> String {
 
     bytes.extend(trimmed);
 
-    // Convert the entire thing to base64url
-    let result = format!("{}{}", 'u', general_purpose::URL_SAFE_NO_PAD.encode(&bytes));
-
-    result
+    bytes
 }
