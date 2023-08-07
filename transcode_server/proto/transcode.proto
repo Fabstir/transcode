@@ -4,8 +4,9 @@ package transcode;
 
 message TranscodeRequest {
     string source_cid = 1;
-    bool is_gpu = 2;
-    bool is_encrypt = 3;
+    uint32 file_size = 2;
+    string video_formats = 3;
+    bool is_gpu = 4;
 }
 
 message TranscodeResponse {

@@ -97,11 +97,15 @@ struct VideoFormat {
 ///
 pub async fn transcode_video(
     file_path: &str,
+    file_size: u32,
     video_format: &str,
     is_gpu: bool,
-    is_encrypt: bool,
 ) -> Result<Response<TranscodeResponse>, Status> {
-    println!("Processing video at: {}", file_path);
+    println!("transcode_video: Processing video at: {}", file_path);
+    println!("transcode_video: file_size: {}", file_size);
+    println!("transcode_video: video_format: {}", video_format);
+    println!("transcode_video: is_gpu: {}", is_gpu);
+    println!("transcode_video: file_size: {}", file_size);
 
     let unsanitized_file_name = Path::new(file_path)
         .file_name()
@@ -115,7 +119,6 @@ pub async fn transcode_video(
     println!("is_gpu = {}", &is_gpu);
 
     let mut encryption_key1: Vec<u8> = Vec::new();
-    let mut encryption_key2: Vec<u8> = Vec::new();
 
     let mut response: TranscodeResponse;
 
@@ -151,25 +154,6 @@ pub async fn transcode_video(
 
         let output = cmd.output().expect("Failed to execute command");
         println!("{:?}", output);
-
-        match encrypt_file_xchacha20(
-            format!("./temp/to/transcode/{}_ue.mp4", file_name),
-            format!("./temp/to/transcode/{}.mp4", file_name),
-            0,
-        ) {
-            Ok(bytes) => {
-                // Encryption succeeded, and `bytes` contains the encrypted data
-                // Add your success handling code here
-                encryption_key1 = bytes;
-                println!("Encryption succeeded");
-            }
-            Err(error) => {
-                // Encryption failed
-                // Handle the error here
-                eprintln!("Encryption error: {:?}", error);
-                // Optionally, you can return an error or perform error-specific handling
-            }
-        }
     } else {
         println!("CPU transcoding");
 
@@ -200,7 +184,26 @@ pub async fn transcode_video(
         println!("{:?}", output);
     }
 
-    if (is_encrypt) {
+    if file_size > 0 {
+        match encrypt_file_xchacha20(
+            format!("./temp/to/transcode/{}_ue.mp4", file_name),
+            format!("./temp/to/transcode/{}.mp4", file_name),
+            0,
+        ) {
+            Ok(bytes) => {
+                // Encryption succeeded, and `bytes` contains the encrypted data
+                // Add your success handling code here
+                encryption_key1 = bytes;
+                println!("Encryption succeeded");
+            }
+            Err(error) => {
+                // Encryption failed
+                // Handle the error here
+                eprintln!("Encryption error: {:?}", error);
+                // Optionally, you can return an error or perform error-specific handling
+            }
+        }
+
         let file_path = format!("./temp/to/transcode/{}_ue.mp4", file_name);
         let file_path_encrypted = format!("./temp/to/transcode/{}.mp4", file_name);
 
@@ -326,7 +329,7 @@ pub async fn transcode_video(
             }
         };
     } else {
-        let file_path = format!("./temp/to/transcode/{}.mp4", file_name);
+        let file_path = format!("./temp/to/transcode/{}_ue.mp4", file_name);
 
         // Upload the transcoded videos to storage
         match upload_video(file_path.as_str()) {

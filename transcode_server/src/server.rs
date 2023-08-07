@@ -68,14 +68,14 @@ const CHUNK_SIZE_AS_POWEROF2_SIZE: usize = 1;
 
 const KEY_SIZE: usize = 32;
 const PADDING_SIZE: usize = 4;
-const ORIGINAL_CID_SIZE: usize = 37;
+const ORIGINAL_CID_SIZE: usize = 34;
 
 /**
  * Extracts the encryption key from an encrypted CID.
  * @param encrypted_cid - The encrypted CID to get the key from.
  * @returns The encryption key from the CID.
  */
-pub fn get_key_from_encrypted_cid(encrypted_cid: &str) -> String {
+pub fn get_key_from_encrypted_cid(encrypted_cid: &str, file_size: u32) -> String {
     let extension_index = encrypted_cid.rfind(".");
 
     let mut cid_without_extension = match extension_index {
@@ -94,14 +94,30 @@ pub fn get_key_from_encrypted_cid(encrypted_cid: &str) -> String {
 
     cid_without_extension = &cid_without_extension[1..];
     let cid_bytes = base64url_to_bytes(cid_without_extension);
-    let start_index = cid_bytes.len() - KEY_SIZE - PADDING_SIZE - ORIGINAL_CID_SIZE;
-    let end_index = cid_bytes.len() - PADDING_SIZE - ORIGINAL_CID_SIZE;
+
+    let file_size_length = number_of_bytes(file_size);
+
+    let start_index =
+        cid_bytes.len() - KEY_SIZE - PADDING_SIZE - ORIGINAL_CID_SIZE - file_size_length;
+    let end_index = cid_bytes.len() - PADDING_SIZE - ORIGINAL_CID_SIZE - file_size_length;
     let selected_bytes = &cid_bytes[start_index..end_index];
 
     let key = bytes_to_base64url(selected_bytes);
     println!("get_key_from_encrypted_cid: key = {}", key);
 
     return key;
+}
+
+fn number_of_bytes(value: u32) -> usize {
+    let mut value = value;
+    let mut bytes = 1;
+
+    while value >= 256 {
+        value >>= 8;
+        bytes += 1;
+    }
+
+    bytes
 }
 
 /// Calculates the SHA-256 hash of the given `blob` and encrypts it using the
@@ -113,9 +129,11 @@ pub fn get_key_from_encrypted_cid(encrypted_cid: &str) -> String {
 /// * `blob` - The blob to hash and encrypt.
 /// * `key` - The encryption key to use.
 ///
-pub fn get_base64_url_encrypted_blob_hash(encrypted_cid: &str) -> Option<String> {
+pub fn get_base64_url_encrypted_blob_hash(encrypted_cid: &str, file_size: u32) -> Option<String> {
     let encrypted_cid = &encrypted_cid[1..];
     let cid_bytes = base64url_to_bytes(encrypted_cid);
+
+    let file_size_length = number_of_bytes(file_size);
 
     // Calculate the size of encryptedBlobHash
     let encrypted_blob_hash_size = cid_bytes.len()
@@ -124,7 +142,8 @@ pub fn get_base64_url_encrypted_blob_hash(encrypted_cid: &str) -> Option<String>
         - CHUNK_SIZE_AS_POWEROF2_SIZE
         - KEY_SIZE
         - PADDING_SIZE
-        - ORIGINAL_CID_SIZE;
+        - ORIGINAL_CID_SIZE
+        - file_size_length;
 
     println!("encrypted_blob_hash_size: {}", encrypted_blob_hash_size);
 
@@ -163,8 +182,12 @@ fn generate_random_filename() -> String {
 /// * `transcode_done_sender` - The sender channel for the "transcoding done" message.
 /// * `transcoder` - The transcoder to use for transcoding the input files.
 ///
-async fn transcode_task_receiver(receiver: Arc<Mutex<mpsc::Receiver<(String, bool, bool)>>>) {
-    while let Some((orig_source_cid, is_gpu, is_encrypt)) = receiver.lock().await.recv().await {
+async fn transcode_task_receiver(
+    receiver: Arc<Mutex<mpsc::Receiver<(String, u32, String, bool)>>>,
+) {
+    while let Some((orig_source_cid, file_size, video_formats, is_gpu)) =
+        receiver.lock().await.recv().await
+    {
         let source_cid = Path::new(&orig_source_cid)
             .with_extension("")
             .file_stem()
@@ -176,7 +199,7 @@ async fn transcode_task_receiver(receiver: Arc<Mutex<mpsc::Receiver<(String, boo
             .to_string();
 
         // First, we download the video and save it locally
-        let portal_url = if is_encrypt {
+        let portal_url = if file_size > 0 {
             var("PORTAL_ENCRYPT_URL").unwrap()
         } else {
             var("PORTAL_URL").unwrap()
@@ -188,13 +211,17 @@ async fn transcode_task_receiver(receiver: Arc<Mutex<mpsc::Receiver<(String, boo
 
         let file_path;
 
-        if (is_encrypt) {
-            println!("Encrypted CID: {}", source_cid);
-            // Extract the BASE64_URL_ENCRYPTED_BLOB_HASH from encrypted CID
-            let base64_url_encrypted_blob_hash = get_base64_url_encrypted_blob_hash(&source_cid)
-                .expect("Failed to get base64 URL encrypted blob hash");
+        println!("file_size: {}", file_size);
 
-            // GET https://s5.cx/api/locations/BASE64_URL_ENCRYPTED_BLOB_HASH?types=5,3 to get download urls for your encrypted file
+        if file_size > 0 {
+            println!("source_cid: {}", source_cid);
+            //            println!("Encrypted CID: {}", source_cid);
+            // // Extract the BASE64_URL_ENCRYPTED_BLOB_HASH from encrypted CID
+            let base64_url_encrypted_blob_hash =
+                get_base64_url_encrypted_blob_hash(&source_cid, file_size)
+                    .expect("Failed to get base64 URL encrypted blob hash");
+
+            // // GET https://s5.cx/api/locations/BASE64_URL_ENCRYPTED_BLOB_HASH?types=5,3 to get download urls for your encrypted file
             let url = format!(
                 "{}{}{}?types=5,3",
                 portal_url, "/api/locations/", base64_url_encrypted_blob_hash
@@ -226,6 +253,9 @@ async fn transcode_task_receiver(receiver: Arc<Mutex<mpsc::Receiver<(String, boo
             let path_to_file = var("PATH_TO_FILE").unwrap();
             let file_path_encrypted = format!("{}{}", path_to_file, generate_random_filename());
 
+            println!("file_encrypted_metadata: {:?}", file_encrypted_metadata);
+            println!("encrypted_metadata: {:?}", encrypted_metadata);
+
             // get download urls for your encrypted file
             // and then just download the encrypted file using any http download library
             match download_and_concat_files(encrypted_metadata, file_path_encrypted.clone()).await {
@@ -244,7 +274,7 @@ async fn transcode_task_receiver(receiver: Arc<Mutex<mpsc::Receiver<(String, boo
             let last_index_size =
                 (file_encrypted_size as f64 / (262144 + 16) as f64).floor() as u32;
 
-            let key = get_key_from_encrypted_cid(&source_cid);
+            let key = get_key_from_encrypted_cid(&source_cid, file_size);
             let key_bytes = base64url_to_bytes(&key);
             //let key_bytes = vec![0; 32];
 
@@ -281,19 +311,25 @@ async fn transcode_task_receiver(receiver: Arc<Mutex<mpsc::Receiver<(String, boo
             };
         }
 
-        // Read the video formats from the JSON file
-        let video_formats_json = read_to_string("./settings/video_formats.json")
-            .expect("Failed to read video format file");
-        let video_formats: Vec<Value> =
+        let video_formats_file = var("VIDEO_FORMATS_FILE").unwrap();
+
+        let video_formats_json = if !video_formats.is_empty() {
+            video_formats.clone()
+        } else {
+            read_to_string(video_formats_file.as_str()).expect("Failed to read video format file")
+        };
+
+        print!("video_formats_json: {}", video_formats_json);
+        let video_formats_vec: Vec<Value> =
             serde_json::from_str(&video_formats_json).expect("Failed to parse video formats");
 
         // Then, we transcode the downloaded video with each video format
         let mut transcoded_formats = Vec::new();
-        for video_format in video_formats {
+        for video_format in video_formats_vec {
             let video_format = serde_json::to_string(&video_format)
                 .expect("Failed to convert JSON value to string");
             let transcode_result =
-                transcode_video(&file_path, &video_format, is_gpu, is_encrypt).await;
+                transcode_video(&file_path, file_size, &video_format, is_gpu).await;
 
             // Handle potential errors
             if let Err(e) = &transcode_result {
@@ -327,7 +363,7 @@ async fn transcode_task_receiver(receiver: Arc<Mutex<mpsc::Receiver<(String, boo
 // The gRPC service implementation
 #[derive(Debug, Clone)]
 struct TranscodeServiceHandler {
-    transcode_task_sender: Option<Arc<Mutex<mpsc::Sender<(String, bool, bool)>>>>,
+    transcode_task_sender: Option<Arc<Mutex<mpsc::Sender<(String, u32, String, bool)>>>>,
 }
 
 #[async_trait]
@@ -339,11 +375,14 @@ impl TranscodeService for TranscodeServiceHandler {
         let source_cid = request.get_ref().source_cid.clone();
         println!("Received source_cid: {}", source_cid);
 
+        let file_size = request.get_ref().file_size;
+        println!("Received file_size: {}", file_size);
+
+        let video_formats = request.get_ref().video_formats.clone();
+        println!("Received video_formats: {}", video_formats);
+
         let is_gpu = request.get_ref().is_gpu;
         println!("Received is_gpu: {}", is_gpu);
-
-        let is_encrypt = request.get_ref().is_encrypt;
-        println!("Received is_encrypt: {}", is_encrypt);
 
         println!(
             "transcode_task_sender is None: {}",
@@ -354,7 +393,10 @@ impl TranscodeService for TranscodeServiceHandler {
         if let Some(ref sender) = self.transcode_task_sender {
             let sender = sender.lock().await.clone();
 
-            if let Err(e) = sender.send((source_cid.clone(), is_gpu, is_encrypt)).await {
+            if let Err(e) = sender
+                .send((source_cid.clone(), file_size, video_formats.clone(), is_gpu))
+                .await
+            {
                 return Err(Status::internal(format!(
                     "Failed to send transcoding task: {}",
                     e
@@ -421,28 +463,32 @@ impl From<transcode::TranscodeResponse> for TranscodeResponseWrapper {
     }
 }
 
-impl From<tokio::sync::mpsc::error::SendError<(String, bool, bool)>> for TranscodeError {
-    fn from(e: tokio::sync::mpsc::error::SendError<(String, bool, bool)>) -> Self {
+impl From<tokio::sync::mpsc::error::SendError<(String, u32, String, bool)>> for TranscodeError {
+    fn from(e: tokio::sync::mpsc::error::SendError<(String, u32, String, bool)>) -> Self {
         TranscodeError(format!("Failed to send transcoding task: {}", e))
     }
 }
 
 #[derive(Debug, Clone)]
 struct RestHandler {
-    transcode_task_sender: Option<Arc<Mutex<mpsc::Sender<(String, bool, bool)>>>>,
+    transcode_task_sender: Option<Arc<Mutex<mpsc::Sender<(String, u32, String, bool)>>>>,
 }
 
 impl RestHandler {
     async fn transcode(
         &self,
         source_cid: String,
+        file_size: u32,
+        video_formats: String,
         is_gpu: bool,
-        is_encrypt: bool,
     ) -> Result<impl warp::Reply, warp::Rejection> {
         if let Some(ref sender) = self.transcode_task_sender {
             let sender = sender.lock().await.clone();
 
-            if let Err(e) = sender.send((source_cid.clone(), is_gpu, is_encrypt)).await {
+            if let Err(e) = sender
+                .send((source_cid.clone(), file_size, video_formats.clone(), is_gpu))
+                .await
+            {
                 return Err(warp::reject::custom(TranscodeError::from(e)));
             }
         }
@@ -502,8 +548,9 @@ pub mod transcode {
 #[derive(Deserialize)]
 struct QueryParams {
     source_cid: String,
+    file_size: u32,
+    video_formats: String,
     is_gpu: bool,
-    is_encrypt: bool,
 }
 
 /// The main entry point for the transcode server. Initializes the server
@@ -516,7 +563,7 @@ async fn main() {
     dotenv().ok();
 
     // Create a channel for transcoding tasks
-    let (task_sender, task_receiver) = mpsc::channel::<(String, bool, bool)>(100);
+    let (task_sender, task_receiver) = mpsc::channel::<(String, u32, String, bool)>(100);
     let task_receiver = Arc::new(Mutex::new(task_receiver));
 
     // Start the transcoding task receiver
@@ -564,7 +611,12 @@ async fn main() {
             let rest_handler = rest_handler_transcode.clone();
             async move {
                 rest_handler
-                    .transcode(params.source_cid, params.is_gpu, params.is_encrypt)
+                    .transcode(
+                        params.source_cid,
+                        params.file_size,
+                        params.video_formats,
+                        params.is_gpu,
+                    )
                     .await
             }
         })
