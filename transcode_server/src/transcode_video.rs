@@ -97,15 +97,14 @@ struct VideoFormat {
 ///
 pub async fn transcode_video(
     file_path: &str,
-    file_size: u32,
     video_format: &str,
+    is_encrypted: bool,
     is_gpu: bool,
 ) -> Result<Response<TranscodeResponse>, Status> {
     println!("transcode_video: Processing video at: {}", file_path);
-    println!("transcode_video: file_size: {}", file_size);
     println!("transcode_video: video_format: {}", video_format);
+    println!("transcode_video: is_encrypted: {}", is_encrypted);
     println!("transcode_video: is_gpu: {}", is_gpu);
-    println!("transcode_video: file_size: {}", file_size);
 
     let unsanitized_file_name = Path::new(file_path)
         .file_name()
@@ -184,7 +183,7 @@ pub async fn transcode_video(
         println!("{:?}", output);
     }
 
-    if file_size > 0 {
+    if is_encrypted {
         match encrypt_file_xchacha20(
             format!("./temp/to/transcode/{}_ue.mp4", file_name),
             format!("./temp/to/transcode/{}.mp4", file_name),

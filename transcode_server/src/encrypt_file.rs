@@ -26,8 +26,8 @@ fn encrypt_file_xchacha20_internal<R: Read>(
     mut output_file: File,
     padding: usize,
 ) -> anyhow::Result<Vec<u8>> {
-    let key = GenericArray::from_slice(&[0u8; 32]);
-    //    let key = XChaCha20Poly1305::generate_key(&mut OsRng);
+    //let key = GenericArray::from_slice(&[0u8; 32]);
+    let key = XChaCha20Poly1305::generate_key(&mut OsRng);
     let cipher = XChaCha20Poly1305::new(&key);
 
     let mut chunk_index: u32 = 0;
